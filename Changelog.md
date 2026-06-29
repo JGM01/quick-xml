@@ -16,6 +16,15 @@
 
 ### New Features
 
+### Bug Fixes
+
+### Misc Changes
+
+
+## 0.41.0 -- 2026-06-29
+
+### New Features
+
 - [#970]: Add `NsReader::resolver_mut()` and
   `NamespaceResolver::{max_declarations_per_element, set_max_declarations_per_element}`.
 
@@ -35,8 +44,6 @@
   not bound its memory exposure on untrusted input. The limit is configurable
   via `NamespaceResolver::set_max_declarations_per_element` (use `usize::MAX`
   to disable).
-
-### Misc Changes
 
 [#969]: https://github.com/tafia/quick-xml/issues/969
 [#970]: https://github.com/tafia/quick-xml/issues/970
