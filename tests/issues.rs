@@ -8,8 +8,8 @@ use std::sync::mpsc;
 
 use quick_xml::errors::{Error, IllFormedError, SyntaxError};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
-use quick_xml::name::QName;
-use quick_xml::reader::Reader;
+use quick_xml::name::{Namespace, QName, ResolveResult};
+use quick_xml::reader::{NsReader, Reader};
 use quick_xml::utils::Bytes;
 
 use pretty_assertions::assert_eq;
@@ -130,7 +130,10 @@ mod issue514 {
 
         reader.config_mut().check_end_names = false;
 
-        assert_eq!(reader.read_text(html_end.name()).unwrap(), "...");
+        assert_eq!(
+            reader.read_text(html_end.name()).unwrap(),
+            BytesText::from_escaped("...")
+        );
 
         reader.config_mut().check_end_names = true;
 
@@ -153,7 +156,10 @@ mod issue514 {
 
         reader.config_mut().check_end_names = false;
 
-        assert_eq!(reader.read_text(html_end.name()).unwrap(), "...");
+        assert_eq!(
+            reader.read_text(html_end.name()).unwrap(),
+            BytesText::from_escaped("...")
+        );
 
         reader.config_mut().check_end_names = true;
 
@@ -188,6 +194,39 @@ fn issue590() {
             break;
         }
     }
+}
+
+#[test]
+fn issue597() {
+    const S: &'static str = r#"
+    <?xml version="1.0" encoding="UTF-8"?>
+    <oval_definitions xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+        <tests>
+            <xmlfilecontent_test xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#independent">
+            </xmlfilecontent_test>
+            <xmlfilecontent_test xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#independent">
+            </xmlfilecontent_test>
+        </tests>
+        <objects/>
+    </oval_definitions>"#;
+
+    let mut reader = NsReader::from_str(S);
+    let objects_ns = loop {
+        let (ns, ev) = reader.read_resolved_event().unwrap();
+        match ev {
+            Event::Start(v) if v.local_name().as_ref() == b"xmlfilecontent_test" => {
+                reader.read_to_end(v.name()).unwrap();
+            }
+            Event::Empty(v) if v.local_name().as_ref() == b"objects" => break ns,
+            _ => (),
+        }
+    };
+    assert_eq!(
+        objects_ns,
+        ResolveResult::Bound(Namespace(
+            b"http://oval.mitre.org/XMLSchema/oval-definitions-5"
+        ))
+    );
 }
 
 /// Regression test for https://github.com/tafia/quick-xml/issues/604
@@ -566,4 +605,106 @@ mod issue923 {
 
         assert_eq!(reader.read_event_into(&mut buf).unwrap(), Event::Eof);
     }
+}
+
+/// Regression test for https://github.com/tafia/quick-xml/issues/939
+///
+/// Checks that reading from a short internal buffer of `BufRead` implementation
+/// does not break the parser. Here `BufReader` splits input into two 4-byte chunks:
+/// - `<r><`
+/// - `/r>`
+///
+/// Passing of this test shows that `<` in the end of the first chunk does not
+/// considered as an incomplete tag and parser correctly consumes this byte and
+/// requests the next chunk.
+#[test]
+fn issue939() {
+    let xml_file = BufReader::with_capacity(4, &b"<r></r>"[..]);
+    let mut reader = Reader::from_reader(xml_file);
+    let mut buf = Vec::new();
+
+    assert_eq!(
+        reader.read_event_into(&mut buf).unwrap(),
+        Event::Start(BytesStart::new("r"))
+    );
+    assert_eq!(
+        quick_xml::utils::Bytes(&buf),
+        quick_xml::utils::Bytes(b"<r>")
+    );
+    assert_eq!(
+        quick_xml::utils::Bytes(reader.get_ref().buffer()),
+        quick_xml::utils::Bytes(b"<")
+    );
+
+    assert_eq!(
+        reader.read_event_into(&mut buf).unwrap(),
+        Event::End(BytesEnd::new("r"))
+    );
+    assert_eq!(
+        quick_xml::utils::Bytes(&buf),
+        quick_xml::utils::Bytes(b"<r></r>")
+    );
+
+    assert_eq!(reader.read_event_into(&mut buf).unwrap(), Event::Eof);
+}
+
+/// Regression test for https://github.com/tafia/quick-xml/issues/950
+#[test]
+fn issue950() {
+    // This DTD is malformed, because
+    // - it contains invalid markup `<>`
+    // - it contains unpaired `>` in internal subset
+    // To correctly report error position in DTD we need to provide DTD events.
+    // For now our task just to skip (correct) DTD, so we postpone error reporting
+    // and go with ending the unknown markup with `>` and skip any unpaired `>`.
+    let reader = BufReader::with_capacity(16, "<!DOCTYPE x[<>12>34567]>".as_bytes());
+    //                                 chunks: ________________--------
+    let mut reader = Reader::from_reader(reader);
+    let mut buf = Vec::new();
+    // Because DTD is malformed and we want to report parsing error in the future,
+    // but currently return Event::DocType, we do not check the read result,
+    // but just ensure that we do not panic
+    let _ = reader.read_event_into(&mut buf);
+}
+
+/// Regression test for https://github.com/tafia/quick-xml/issues/957
+#[test]
+fn issue957() {
+    // Each `<aa`, `<bb`, ... is unknown markup that does not match any of
+    // `<!--`, `<![CDATA[`, `<!ELEMENT`, `<!ATTLIST`, `<!ENTITY`, `<!NOTATION`
+    // and is split across `BufReader` chunks, so the DTD parser re-enters
+    // the `UndecidedMarkup` arm multiple times in a row. Before the fix,
+    // each re-entry grew `skipped` by `cur.len()` until the slice copy
+    // `bytes[..skipped]` against the 9-byte work buffer panicked with
+    // `range end index N out of range for slice of length 9`.
+    let reader = BufReader::with_capacity(4, "<!DOCTYPE r[<aa<bb<cc<dd>".as_bytes());
+    //                                chunks: ____----____----____----_
+    let mut reader = Reader::from_reader(reader);
+    let mut buf = Vec::new();
+    // Same disposition as `issue950`: malformed DTD must not panic; we do
+    // not assert on the returned event since DTD validity reporting is a
+    // future improvement.
+    let _ = reader.read_event_into(&mut buf);
+}
+
+/// Regression test for https://github.com/tafia/quick-xml/issues/960
+#[test]
+fn issue960() {
+    // Sibling of `issue957`. The fix in #958 prevents `skipped` from growing
+    // across multiple `UndecidedMarkup` re-entries, but the same panic was
+    // still reachable via the *initial* `Self::UndecidedMarkup(cur.len() - i - 1)`
+    // assignment one arm earlier: when a single chunk delivered `<` followed
+    // by 9+ bytes of unknown markup, `skipped` was set to that long value in
+    // one shot, and the next call panicked on
+    // `bytes[..skipped].copy_from_slice(...)` against the 9-byte work buffer.
+    let reader = BufReader::with_capacity(
+        24,
+        "<!DOCTYPE r[<aaaaaaaaaaaaaaaaaaaaaaaaaaaaa>]>".as_bytes(),
+    );
+    let mut reader = Reader::from_reader(reader);
+    let mut buf = Vec::new();
+    // Same disposition as `issue950` / `issue957`: malformed DTD must not
+    // panic; we do not assert on the returned event since DTD validity
+    // reporting is a future improvement.
+    let _ = reader.read_event_into(&mut buf);
 }

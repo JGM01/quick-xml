@@ -217,7 +217,7 @@ where
         }
     }
 
-    /// Determines if subtree started with the specified event shoould be skipped.
+    /// Determines if subtree started with the specified event should be skipped.
     ///
     /// Used to map elements with `xsi:nil` attribute set to true to `None` in optional contexts.
     ///
@@ -342,9 +342,10 @@ where
         seed: K,
     ) -> Result<K::Value, Self::Error> {
         match std::mem::replace(&mut self.source, ValueSource::Unknown) {
-            ValueSource::Attribute(value) => seed.deserialize(SimpleTypeDeserializer::from_part(
+            ValueSource::Attribute(value) => seed.deserialize(SimpleTypeDeserializer::from_attr(
                 &self.start.buf,
                 value,
+                self.de.reader.reader.xml_version(),
                 self.start.decoder(),
             )),
             // This arm processes the following XML shape:
@@ -895,7 +896,7 @@ impl<'de> TagFilter<'de> {
 /// <>
 ///   ...
 ///   <item>The is the one item</item>
-///   This is <![CDATA[one another]]> item<!-- even when--> it splitted by comments
+///   This is <![CDATA[one another]]> item<!-- even when--> it is split by comments
 ///   <tag>...and that is the third!</tag>
 ///   ...
 /// </>

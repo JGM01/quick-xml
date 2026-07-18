@@ -13,7 +13,7 @@ mod syntax {
     mod tag {
         use super::*;
 
-        syntax_err!(unclosed1(".<")   => SyntaxError::UnclosedTag);
+        syntax_err!(unclosed1(".<")   => 1, SyntaxError::UnclosedTag);
         syntax_err!(unclosed2(".</")  => SyntaxError::UnclosedTag);
         syntax_err!(unclosed3(".<x")  => SyntaxError::UnclosedTag);
         syntax_err!(unclosed4(".< ")  => SyntaxError::UnclosedTag);
@@ -78,10 +78,10 @@ mod syntax {
     }
 
     // Incorrect after-bang symbol is detected early, so buffer_position() stay at `!`
-    syntax_err!(unclosed_bang1(".<!")   => 2, SyntaxError::InvalidBangMarkup);
-    syntax_err!(unclosed_bang2(".<!>")  => 2, SyntaxError::InvalidBangMarkup);
-    syntax_err!(unclosed_bang3(".<!a")  => 2, SyntaxError::InvalidBangMarkup);
-    syntax_err!(unclosed_bang4(".<!a>") => 2, SyntaxError::InvalidBangMarkup);
+    syntax_err!(unclosed_bang1(".<!")   => 1, SyntaxError::InvalidBangMarkup);
+    syntax_err!(unclosed_bang2(".<!>")  => 1, SyntaxError::InvalidBangMarkup);
+    syntax_err!(unclosed_bang3(".<!a")  => 1, SyntaxError::InvalidBangMarkup);
+    syntax_err!(unclosed_bang4(".<!a>") => 1, SyntaxError::InvalidBangMarkup);
 
     /// https://www.w3.org/TR/xml11/#NT-Comment
     mod comment {
@@ -220,61 +220,6 @@ mod syntax {
         event_ok!(normal4("<?xml\r?>")     => 8: Event::Decl(BytesDecl::from_start(BytesStart::from_content("xml\r", 3))));
         event_ok!(normal5("<?xml\n?>")     => 8: Event::Decl(BytesDecl::from_start(BytesStart::from_content("xml\n", 3))));
         event_ok!(normal6("<?xml\n?>rest") => 8: Event::Decl(BytesDecl::from_start(BytesStart::from_content("xml\n", 3))));
-    }
-
-    /// Tests for UTF-16 encoded XML declarations.
-    /// FIXME: Add support for UTF-8/ASCII incompatible encodings (UTF-16)
-    mod decl_utf16 {
-        use super::*;
-        use pretty_assertions::assert_eq;
-
-        /// UTF-16 LE encoded `<?xml ` (with BOM)
-        /// BOM (FF FE) + '<' (3C 00) + '?' (3F 00) + 'x' (78 00) + 'm' (6D 00) + 'l' (6C 00) + ' ' (20 00)
-        const UTF16_LE_XML_DECL: &[u8] = &[
-            0xFF, 0xFE, // BOM
-            0x3C, 0x00, // <
-            0x3F, 0x00, // ?
-            0x78, 0x00, // x
-            0x6D, 0x00, // m
-            0x6C, 0x00, // l
-            0x20, 0x00, // space
-        ];
-
-        /// UTF-16 BE encoded `<?xml ` (with BOM)
-        /// BOM (FE FF) + '<' (00 3C) + '?' (00 3F) + 'x' (00 78) + 'm' (00 6D) + 'l' (00 6C) + ' ' (00 20)
-        const UTF16_BE_XML_DECL: &[u8] = &[
-            0xFE, 0xFF, // BOM
-            0x00, 0x3C, // <
-            0x00, 0x3F, // ?
-            0x00, 0x78, // x
-            0x00, 0x6D, // m
-            0x00, 0x6C, // l
-            0x00, 0x20, // space
-        ];
-
-        #[test]
-        #[ignore = "UTF-16 support not yet implemented for XML declaration detection"]
-        fn utf16_le_unclosed_xml_decl() {
-            let mut reader = Reader::from_reader(UTF16_LE_XML_DECL);
-            match reader.read_event() {
-                Err(Error::Syntax(cause)) => {
-                    assert_eq!(cause, SyntaxError::UnclosedXmlDecl);
-                }
-                x => panic!("Expected `Err(Syntax(UnclosedXmlDecl))`, but got {:?}", x),
-            }
-        }
-
-        #[test]
-        #[ignore = "UTF-16 support not yet implemented for XML declaration detection"]
-        fn utf16_be_unclosed_xml_decl() {
-            let mut reader = Reader::from_reader(UTF16_BE_XML_DECL);
-            match reader.read_event() {
-                Err(Error::Syntax(cause)) => {
-                    assert_eq!(cause, SyntaxError::UnclosedXmlDecl);
-                }
-                x => panic!("Expected `Err(Syntax(UnclosedXmlDecl))`, but got {:?}", x),
-            }
-        }
     }
 }
 

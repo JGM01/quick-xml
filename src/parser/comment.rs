@@ -24,7 +24,7 @@ use crate::parser::Parser;
 /// let mut parser = CommentParser::default();
 ///
 /// // Parse `<!-- comment with some -> and --- inside-->and the text follow...`
-/// // splitted into three chunks
+/// // split into three chunks
 /// assert_eq!(parser.feed(b"<!-- comment"), None);
 /// // ...get new chunk of data
 /// assert_eq!(parser.feed(b" with some -> and -"), None);
@@ -129,7 +129,7 @@ fn seen1(bytes: &[u8]) -> Option<usize> {
 
 #[inline]
 fn seen2(bytes: &[u8]) -> Option<usize> {
-    match bytes.get(0) {
+    match bytes.first() {
         // --|
         None => None,
         // --|>

@@ -25,6 +25,165 @@
 ### Misc Changes
 
 
+## 0.41.0 -- 2026-06-29
+
+### New Features
+
+- [#970]: Add `NsReader::resolver_mut()` and
+  `NamespaceResolver::{max_declarations_per_element, set_max_declarations_per_element}`.
+
+### Bug Fixes
+
+- [#969]: `Attributes` (and anything that iterates `BytesStart::attributes()`
+  with the default `with_checks(true)`) no longer takes O(N²) time on a start
+  tag with a large number of attributes. Small tags keep the previous linear
+  scan; larger ones switch to a 64-bit hash pre-filter, so the whole tag is
+  O(N). The exact `AttrError::Duplicated(new, prev)` positions are unchanged.
+- [#970]: `NamespaceResolver::push` (and hence every `NsReader` `Start`/`Empty`
+  event) now rejects a start tag that declares more than
+  `DEFAULT_MAX_DECLARATIONS_PER_ELEMENT` (256) `xmlns` / `xmlns:*` namespace
+  bindings, returning the new `NamespaceError::TooManyDeclarations`. Previously
+  `push` allocated one `NamespaceBinding` per declaration with no upper bound,
+  before the event was returned to the caller, so an `NsReader` consumer could
+  not bound its memory exposure on untrusted input. The limit is configurable
+  via `NamespaceResolver::set_max_declarations_per_element` (use `usize::MAX`
+  to disable).
+
+[#969]: https://github.com/tafia/quick-xml/issues/969
+[#970]: https://github.com/tafia/quick-xml/issues/970
+
+
+## 0.40.1 -- 2026-05-15
+
+### Bug Fixes
+
+- [#964]: Fix `unreachable!()` panic in the serde deserializer when a DOCTYPE
+  declaration appears between two text runs inside an element (e.g.
+  `<a>x<!DOCTYPE y>z</a>`). The DOCTYPE used to break `drain_text`'s
+  consecutive-text merge, so two `DeEvent::Text` events reached
+  `read_text` and tripped its "Cannot be two consequent Text events"
+  invariant. DOCTYPE is now treated as transparent during text drain —
+  it still goes through the entity resolver, but the surrounding text
+  is merged into one run. Discovered via libFuzzer on a real-world
+  SAML deserializer harness.
+
+[#964]: https://github.com/tafia/quick-xml/pull/964
+
+### Misc Changes
+
+
+## 0.40.0 -- 2026-05-11
+
+MSRV bumped to 1.79.
+
+Now `quick-xml` supports the UTF-16 encoded documents. See the new `DecodingReader` type.
+
+### New Features
+
+- [#956]: Add `DecodingReader`, a `BufRead` adapter that auto-detects encoding
+  from BOM or XML declaration and transcodes to UTF-8. Enabled by the `encoding` feature.
+- [#938]: Add new enumeration `XmlVersion` and typified getter `BytesDecl::xml_version()`.
+- [#938]: Add new error variant `IllFormedError::UnknownVersion`.
+- [#371]: Add new error variant `EscapeError::TooManyNestedEntities`.
+- [#371]: Improved compliance with the XML attribute value normalization process by adding
+  - `Attribute::normalized_value()`
+  - `Attribute::normalized_value_with()`
+  - `Attribute::decoded_and_normalized_value()`
+  - `Attribute::decoded_and_normalized_value_with()`
+
+  which ought to be used in place of deprecated
+  - `Attribute::unescape_value()`
+  - `Attribute::unescape_value_with()`
+  - `Attribute::decode_and_unescape_value()`
+  - `Attribute::decode_and_unescape_value_with()`
+
+  Deprecated functions now behaves the same as newly added.
+
+### Bug Fixes
+
+- [#938]: Use correct rules for EOL normalization in `Deserializer` when parse XML 1.0 documents.
+  Previously XML 1.1. rules was applied.
+
+### Misc Changes
+
+- [#914]: Remove deprecated `.prefixes()`, `.resolve()`, `.resolve_attribute()`, and `.resolve_element()`
+  of `NsReader`. Use `.resolver().<...>` methods instead.
+- [#938]: Now `BytesText::xml_content`, `BytesCData::xml_content` and `BytesRef::xml_content`
+  accepts `XmlVersion` parameter to apply correct EOL normalization rules.
+- [#944]: `read_text()` now returns `BytesText` which allows you to get the content with
+  properly normalized EOLs. To get the previous behavior use `.read_text().decode()?`.
+- [#956]: Bumped MSRV from 1.59 (Feb 2022) to 1.79 (June 2024)
+
+[#371]: https://github.com/tafia/quick-xml/issues/371
+[#914]: https://github.com/tafia/quick-xml/pull/914
+[#938]: https://github.com/tafia/quick-xml/pull/938
+[#944]: https://github.com/tafia/quick-xml/pull/944
+[#956]: https://github.com/tafia/quick-xml/pull/956
+
+
+## 0.39.4 -- 2026-05-08
+
+### Bug Fixes
+
+- [#957]: Fix slice-index panic when reading malformed DTD whose unknown markup
+  is split across `BufReader` chunks. As with [#950], the returned
+  `Event::DocType` may contain the malformed DTD; this fix only ensures that
+  the parser does not panic.
+- [#960]: Fix sibling slice-index panic when a single chunk delivers `<` followed
+  by 9+ bytes of unknown markup inside a DTD internal subset. Same disposition
+  as [#957] / [#950]: parser must not panic; DTD validity reporting is a future
+  improvement.
+
+[#950]: https://github.com/tafia/quick-xml/issues/950
+[#957]: https://github.com/tafia/quick-xml/issues/957
+[#960]: https://github.com/tafia/quick-xml/issues/960
+
+
+## 0.39.3 -- 2026-05-04
+
+### Bug Fixes
+
+- [#950]: Fix subtraction with overflow when parse malformed DTD in some cases.
+  Note, that currently we do not check the validity of DTD, so the returned `Event::DocType`
+  may contain the malformed DTD.
+
+[#950]: https://github.com/tafia/quick-xml/issues/950
+
+
+## 0.39.2 -- 2026-02-20
+
+### New Features
+
+- [#483]: Implement `read_text_into()` and `read_text_into_async()`.
+
+### Bug Fixes
+
+- [#939]: Fix parsing error of the tag from buffered reader, when the first byte `<`
+  is the last in the `BufRead` internal buffer. This is the regression from [#936].
+
+[#483]: https://github.com/tafia/quick-xml/issues/483
+[#936]: https://github.com/tafia/quick-xml/pull/936
+[#939]: https://github.com/tafia/quick-xml/issues/939
+
+
+## 0.39.1 -- 2026-02-15
+
+### New Features
+
+- [#598]: Add method `NamespaceResolver::set_level` which may be helpful in some circumstances.
+
+### Bug Fixes
+
+- [#597]: Fix incorrect processing of namespace scopes in `NsReader::read_to_end`
+  `NsReader::read_to_end_into`, `NsReader::read_to_end_into_async` and `NsReader::read_text`.
+  The scope started by a start element was not ended after that call.
+- [#936]: Fix incorrect result of `.read_text()` when it is called after reading `Text` or `GeneralRef` event.
+
+[#597]: https://github.com/tafia/quick-xml/issues/597
+[#598]: https://github.com/tafia/quick-xml/pull/598
+[#936]: https://github.com/tafia/quick-xml/pull/936
+
+
 ## 0.39.0 -- 2026-01-11
 
 Added a way to configure `Writer`. Now all configuration is contained in the `writer::Config`

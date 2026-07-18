@@ -1563,7 +1563,8 @@ mod xml_schema_lists {
         list!(string: String = r#"<root list="first second  third&#x20;3"/>"# => vec![
             "first".to_string(),
             "second".to_string(),
-            "third 3".to_string(),
+            "third".to_string(),
+            "3".to_string(),
         ]);
         err!(byte_buf: ByteBuf = r#"<root list="first second  third&#x20;3"/>"#
             => Custom("invalid type: string \"first\", expected byte data"));
@@ -1895,6 +1896,84 @@ mod resolve {
     }
 }
 
+/// A DOCTYPE declaration inside an element's text content used to split
+/// the surrounding character data into two consecutive `DeEvent::Text`
+/// events, tripping an `unreachable!()` in `read_text` ("Cannot be two
+/// consequent Text events"). The reader emits Text/DocType/Text for an
+/// input like `<a>x<!DOCTYPE y>z</a>`, and `drain_text` did not drain
+/// across DocType events, so the two text runs reached the
+/// deserializer un-merged. Discovered via libFuzzer on a real-world
+/// SAML response harness.
+///
+/// The expected behavior is: DOCTYPE inside an element is captured by
+/// the entity resolver (it has the same role as a prolog-level DOCTYPE
+/// for entity definitions) and the surrounding text is treated as one
+/// continuous run.
+mod doctype_in_element_text {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Wrapper {
+        #[serde(rename = "$text")]
+        text: String,
+    }
+
+    /// Minimal regression repro: a single DOCTYPE event between two
+    /// adjacent text runs inside an element should not panic.
+    #[test]
+    fn single_doctype_between_text() {
+        let xml = r#"<a>x<!DOCTYPE y>z</a>"#;
+        let got: Wrapper = from_str(xml).unwrap();
+        assert_eq!(got, Wrapper { text: "xz".into() });
+    }
+
+    /// Multiple DOCTYPE events stacked between text runs (matching the
+    /// shape of the fuzzer-discovered input that originally surfaced
+    /// this panic on real SAML traffic).
+    #[test]
+    fn multiple_doctypes_between_text() {
+        let xml = r#"<a>x<!DOCTYPE y><!DOCTYPE z>w</a>"#;
+        let got: Wrapper = from_str(xml).unwrap();
+        assert_eq!(got, Wrapper { text: "xw".into() });
+    }
+
+    /// DOCTYPE followed by text only (no leading text). Should produce
+    /// the trailing text without panic.
+    #[test]
+    fn leading_doctype_then_text() {
+        let xml = r#"<a><!DOCTYPE y>x</a>"#;
+        let got: Wrapper = from_str(xml).unwrap();
+        assert_eq!(got, Wrapper { text: "x".into() });
+    }
+
+    /// Whitespace adjacent to the DOCTYPE on both sides should be
+    /// preserved verbatim when the two text runs are merged — the
+    /// DOCTYPE is treated as transparent, not as a delimiter.
+    #[test]
+    fn whitespace_around_doctype() {
+        let xml = "<a>x <!DOCTYPE y>\tz</a>";
+        let got: Wrapper = from_str(xml).unwrap();
+        assert_eq!(
+            got,
+            Wrapper {
+                text: "x \tz".into()
+            }
+        );
+
+        // Whitespace at the element boundaries (before the leading
+        // text and after the trailing text) is also preserved.
+        let xml = "<a> x<!DOCTYPE y>z </a>";
+        let got: Wrapper = from_str(xml).unwrap();
+        assert_eq!(
+            got,
+            Wrapper {
+                text: " xz ".into()
+            }
+        );
+    }
+}
+
 /// Tests for https://github.com/tafia/quick-xml/pull/603.
 ///
 /// According to <https://www.w3.org/TR/xml11/#NT-prolog> comments,
@@ -1966,5 +2045,88 @@ mod xml_prolog {
             .unwrap(),
             HashMap::new()
         );
+    }
+}
+
+/// Tests for https://github.com/tafia/quick-xml/pull/937.
+///
+/// Checks that correct EOL normalization rules is applied to the texts.
+mod xml_version {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use quick_xml::errors::{Error, IllFormedError};
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Root {
+        #[serde(rename = "@attribute")]
+        attribute: String,
+
+        #[serde(rename = "$text")]
+        text: String,
+    }
+
+    #[test]
+    fn v1_0_implicit() {
+        assert_eq!(
+            from_str::<Root>(
+                "\
+                <root attribute='\r\n,\n,\r,\r\u{0085},\u{0085},\u{2028}'>\r\n,\n,\r,\r\u{0085},\u{0085},\u{2028}</root>\
+                "
+            )
+            .unwrap(),
+            Root {
+                attribute: " , , , \u{0085},\u{0085},\u{2028}".to_string(),
+                text: "\n,\n,\n,\n\u{0085},\u{0085},\u{2028}".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn v1_0_explicit() {
+        assert_eq!(
+            from_str::<Root>(
+                "\
+                <?xml version='1.0'?>\
+                <root attribute='\r\n,\n,\r,\r\u{0085},\u{0085},\u{2028}'>\r\n,\n,\r,\r\u{0085},\u{0085},\u{2028}</root>\
+                "
+            )
+            .unwrap(),
+            Root {
+                attribute: " , , , \u{0085},\u{0085},\u{2028}".to_string(),
+                text: "\n,\n,\n,\n\u{0085},\u{0085},\u{2028}".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn v1_1() {
+        assert_eq!(
+            from_str::<Root>(
+                "\
+                <?xml version='1.1'?>\
+                <root attribute='\r\n,\n,\r,\r\u{0085},\u{0085},\u{2028}'>\r\n,\n,\r,\r\u{0085},\u{0085},\u{2028}</root>\
+                "
+            )
+            .unwrap(),
+            Root {
+                attribute: " , , , , , ".to_string(),
+                text: "\n,\n,\n,\n,\n,\n".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn unknown() {
+        match from_str::<Root>(
+            "\
+                <?xml version='1.2'?>\
+                <root attribute='\r\n,\n,\r,\r\u{0085},\u{0085},\u{2028}'>\r\n,\n,\r,\r\u{0085},\u{0085},\u{2028}</root>\
+                ",
+        ) {
+            Err(DeError::InvalidXml(Error::IllFormed(cause))) => {
+                assert_eq!(cause, IllFormedError::UnknownVersion,)
+            }
+            x => panic!("Expected `Err(InvalidXml(IllFormed(_)))`, but got {:?}", x),
+        }
     }
 }

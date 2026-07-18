@@ -1,11 +1,7 @@
-// std::hint::black_box stable since 1.66, but our MSRV = 1.56.
-// criterion::black_box is deprecated in since criterion 0.7.
-// Running benchmarks assumed on current Rust version, so this should be fine
-#![allow(clippy::incompatible_msrv)]
 use criterion::{self, criterion_group, criterion_main, Criterion, Throughput};
 use quick_xml::events::Event;
 use quick_xml::reader::{NsReader, Reader};
-use quick_xml::Result as XmlResult;
+use quick_xml::{Result as XmlResult, XmlVersion};
 use std::hint::black_box;
 
 static RPM_PRIMARY: &str = include_str!("../tests/documents/rpm_primary.xml");
@@ -48,18 +44,21 @@ static INPUTS: &[(&str, &str)] = &[
     ("players.xml", PLAYERS),
 ];
 
-// TODO: use fully normalized attribute values
 fn parse_document_from_str(doc: &str) -> XmlResult<()> {
     let mut r = Reader::from_str(doc);
+    let mut version = XmlVersion::Implicit1_0;
     loop {
         match black_box(r.read_event()?) {
+            Event::Decl(e) => {
+                version = e.xml_version()?;
+            }
             Event::Start(e) | Event::Empty(e) => {
                 for attr in e.attributes() {
-                    black_box(attr?.decode_and_unescape_value(r.decoder())?);
+                    black_box(attr?.decoded_and_normalized_value(version, r.decoder())?);
                 }
             }
             Event::Text(e) => {
-                black_box(e.xml_content()?);
+                black_box(e.xml10_content()?);
             }
             Event::CData(e) => {
                 black_box(e.into_inner());
@@ -72,19 +71,22 @@ fn parse_document_from_str(doc: &str) -> XmlResult<()> {
     Ok(())
 }
 
-// TODO: use fully normalized attribute values
 fn parse_document_from_bytes(doc: &[u8]) -> XmlResult<()> {
     let mut r = Reader::from_reader(doc);
+    let mut version = XmlVersion::Implicit1_0;
     let mut buf = Vec::new();
     loop {
         match black_box(r.read_event_into(&mut buf)?) {
+            Event::Decl(e) => {
+                version = e.xml_version()?;
+            }
             Event::Start(e) | Event::Empty(e) => {
                 for attr in e.attributes() {
-                    black_box(attr?.decode_and_unescape_value(r.decoder())?);
+                    black_box(attr?.decoded_and_normalized_value(version, r.decoder())?);
                 }
             }
             Event::Text(e) => {
-                black_box(e.xml_content()?);
+                black_box(e.xml10_content()?);
             }
             Event::CData(e) => {
                 black_box(e.into_inner());
@@ -98,19 +100,22 @@ fn parse_document_from_bytes(doc: &[u8]) -> XmlResult<()> {
     Ok(())
 }
 
-// TODO: use fully normalized attribute values
 fn parse_document_from_str_with_namespaces(doc: &str) -> XmlResult<()> {
     let mut r = NsReader::from_str(doc);
+    let mut version = XmlVersion::Implicit1_0;
     loop {
         match black_box(r.read_resolved_event()?) {
+            (_, Event::Decl(e)) => {
+                version = e.xml_version()?;
+            }
             (resolved_ns, Event::Start(e) | Event::Empty(e)) => {
                 black_box(resolved_ns);
                 for attr in e.attributes() {
-                    black_box(attr?.decode_and_unescape_value(r.decoder())?);
+                    black_box(attr?.decoded_and_normalized_value(version, r.decoder())?);
                 }
             }
             (resolved_ns, Event::Text(e)) => {
-                black_box(e.xml_content()?);
+                black_box(e.xml10_content()?);
                 black_box(resolved_ns);
             }
             (resolved_ns, Event::CData(e)) => {
@@ -125,20 +130,23 @@ fn parse_document_from_str_with_namespaces(doc: &str) -> XmlResult<()> {
     Ok(())
 }
 
-// TODO: use fully normalized attribute values
 fn parse_document_from_bytes_with_namespaces(doc: &[u8]) -> XmlResult<()> {
     let mut r = NsReader::from_reader(doc);
+    let mut version = XmlVersion::Implicit1_0;
     let mut buf = Vec::new();
     loop {
         match black_box(r.read_resolved_event_into(&mut buf)?) {
+            (_, Event::Decl(e)) => {
+                version = e.xml_version()?;
+            }
             (resolved_ns, Event::Start(e) | Event::Empty(e)) => {
                 black_box(resolved_ns);
                 for attr in e.attributes() {
-                    black_box(attr?.decode_and_unescape_value(r.decoder())?);
+                    black_box(attr?.decoded_and_normalized_value(version, r.decoder())?);
                 }
             }
             (resolved_ns, Event::Text(e)) => {
-                black_box(e.xml_content()?);
+                black_box(e.xml10_content()?);
                 black_box(resolved_ns);
             }
             (resolved_ns, Event::CData(e)) => {
